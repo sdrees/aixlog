@@ -4,14 +4,14 @@
 # \_/\_/(__)(_/\_)\____/ \__/  \___/
 
 # This file is part of aixlog
-# Copyright (C) 2017-2020 Johannes Pohl
+# Copyright (C) 2017-2021 Johannes Pohl
 
 # This software may be modified and distributed under the terms
 # of the MIT license.  See the LICENSE file for details.
 
 cmake_minimum_required(VERSION 3.0.0)
 
-project(aixlog VERSION 1.4.0 LANGUAGES CXX)
+project(aixlog VERSION 1.5.0 LANGUAGES CXX)
 set(PROJECT_DESCRIPTION "Header-only C++ logging library")
 set(PROJECT_URL "https://github.com/badaix/aixlog")
 
@@ -40,3 +40,21 @@ endif (BUILD_EXAMPLE)
 
 
 install(FILES include/aixlog.hpp DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+
+FIND_PROGRAM(CLANG_FORMAT "clang-format")
+IF(CLANG_FORMAT)
+	set(CHECK_CXX_SOURCE_FILES
+	${CMAKE_SOURCE_DIR}/include/aixlog.hpp
+	${CMAKE_SOURCE_DIR}/aixlog_example.cpp
+	)
+
+    ADD_CUSTOM_TARGET(
+        reformat
+        COMMAND
+        ${CLANG_FORMAT}
+        -i
+        -style=file
+        ${CHECK_CXX_SOURCE_FILES}
+        COMMENT "Auto formatting of all source files"
+    )
+ENDIF()

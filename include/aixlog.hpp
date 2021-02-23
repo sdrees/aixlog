@@ -3,11 +3,11 @@
      / _\ (  )( \/ )(  )   /  \  / __)
     /    \ )(  )  ( / (_/\(  O )( (_ \
     \_/\_/(__)(_/\_)\____/ \__/  \___/
-    version 1.4.0
+    version 1.5.0
     https://github.com/badaix/aixlog
 
     This file is part of aixlog
-    Copyright (C) 2017-2020 Johannes Pohl
+    Copyright (C) 2017-2021 Johannes Pohl
 
     This software may be modified and distributed under the terms
     of the MIT license.  See the LICENSE file for details.
@@ -178,7 +178,7 @@ enum class Severity : std::int8_t
 
 static Severity to_severity(std::string severity, Severity def = Severity::info)
 {
-    std::transform(severity.begin(), severity.end(), severity.begin(), [](unsigned char c) { return std::tolower(c); });
+    std::transform(severity.begin(), severity.end(), severity.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     if (severity == "trace")
         return Severity::trace;
     else if (severity == "debug")
@@ -277,17 +277,14 @@ struct Conditional
     {
     }
 
-    void set(bool value)
-    {
-        is_true_ = value;
-    }
+    virtual ~Conditional() = default;
 
-    bool is_true() const
+    virtual bool is_true() const
     {
         return is_true_;
     }
 
-private:
+protected:
     bool is_true_;
 };
 
@@ -601,7 +598,7 @@ public:
     }
 
 protected:
-    Log() noexcept : last_buffer_(nullptr)
+    Log() noexcept : last_buffer_(nullptr), do_log_(true)
     {
         std::clog.rdbuf(this);
         std::clog << Severity() << Tag() << Function() << Conditional() << AixLog::Color::NONE << std::flush;
@@ -617,7 +614,7 @@ protected:
         std::lock_guard<std::recursive_mutex> lock(mutex_);
         if (!get_stream().str().empty())
         {
-            if (conditional_.is_true())
+            if (do_log_)
             {
                 for (const auto& sink : log_sinks_)
                 {
@@ -639,7 +636,7 @@ protected:
         {
             if (c == '\n')
                 sync();
-            else
+            else if (do_log_)
                 get_stream() << static_cast<char>(c);
         }
         else
@@ -667,11 +664,14 @@ private:
         return *last_buffer_;
     }
 
+    /// one buffer per thread to avoid mixed log lines
     std::map<std::thread::id, std::stringstream> buffer_;
+    /// the last thread id
     std::thread::id last_id_;
+    /// the last buffer
     std::stringstream* last_buffer_ = nullptr;
     Metadata metadata_;
-    Conditional conditional_;
+    bool do_log_;
     std::vector<log_sink_ptr> log_sinks_;
     std::recursive_mutex mutex_;
 };
@@ -843,8 +843,12 @@ struct SinkOutputDebugString : public Sink
 
     void log(const Metadata& metadata, const std::string& message) override
     {
+#ifdef UNICODE
         std::wstring wide = std::wstring(message.begin(), message.end());
         OutputDebugString(wide.c_str());
+#else
+        OutputDebugString(message.c_str());
+#endif
     }
 };
 #endif
@@ -1004,8 +1008,12 @@ struct SinkEventLog : public Sink
 {
     SinkEventLog(const std::string& ident, const Filter& filter) : Sink(filter)
     {
+#ifdef UNICODE
         std::wstring wide = std::wstring(ident.begin(), ident.end()); // stijnvdb: RegisterEventSource expands to RegisterEventSourceW which takes wchar_t
         event_log = RegisterEventSource(NULL, wide.c_str());
+#else
+        event_log = RegisterEventSource(NULL, ident.c_str());
+#endif
     }
 
     WORD get_type(Severity severity) const
@@ -1031,11 +1039,15 @@ struct SinkEventLog : public Sink
 
     void log(const Metadata& metadata, const std::string& message) override
     {
+#ifdef UNICODE
         std::wstring wide = std::wstring(message.begin(), message.end());
         // We need this temp variable because we cannot take address of rValue
-        const wchar_t* c_str = wide.c_str();
-
+        const auto* c_str = wide.c_str();
         ReportEvent(event_log, get_type(metadata.severity), 0, 0, NULL, 1, 0, &c_str, NULL);
+#else
+        const auto* c_str = message.c_str();
+        ReportEvent(event_log, get_type(metadata.severity), 0, 0, NULL, 1, 0, &c_str, NULL);
+#endif
     }
 
 protected:
@@ -1131,7 +1143,7 @@ static std::ostream& operator<<(std::ostream& os, const Severity& log_severity)
             log->metadata_.timestamp = nullptr;
             log->metadata_.tag = nullptr;
             log->metadata_.function = nullptr;
-            log->conditional_.set(true);
+            log->do_log_ = true;
         }
     }
     else
@@ -1192,7 +1204,7 @@ static std::ostream& operator<<(std::ostream& os, const Conditional& conditional
     if (log != nullptr)
     {
         std::lock_guard<std::recursive_mutex> lock(log->mutex_);
-        log->conditional_.set(conditional.is_true());
+        log->do_log_ = conditional.is_true();
     }
     return os;
 }
